@@ -20,10 +20,13 @@ constexpr double YAW = (M_PI/180.0) * 45;
 constexpr double PITCH = (M_PI/180.0) * -45;
 constexpr double ROLL = (M_PI/180.0) * 32;
 
-// Define measurement uncertainties
-constexpr double SIGMA_N = 0.01;
+// Define ACTUAL measurement uncertainties
+constexpr double SIGMA_N = 0.1;
 constexpr double SIGMA_D = 0.05;
 
+// Define FACTOR measurement uncertainties
+constexpr double F_SIGMA_N = 0.1;
+constexpr double F_SIGMA_D = 0.05;
 
 // Generate noise from a gaussian distribution
 class GaussianNoiseGenerator
@@ -49,6 +52,20 @@ class GaussianNoiseGenerator
 };
 
 
+struct CreatePlane
+{
+  using Plane = std::pair<Symbol, OrientedPlane3>;
+  Plane operator() (const Unit3& n, double d)
+  {
+    return std::make_pair(Symbol('l', count++), OrientedPlane3(n, d));
+  }
+
+  private:
+    int count = 0;
+};
+
+
+
 int main()
 {
   GaussianNoiseGenerator noise_gen(0.01, 0.01);
@@ -63,6 +80,24 @@ int main()
   Symbol x1('x', 1);
   Pose3 x1_pose (Rot3::Ypr(YAW, PITCH, ROLL), Point3(X, Y, Z));
 
+  // Prior on the first pose
+  Vector prior_sigma(6);
+  prior_sigma << 0.001, 0.001, 0.001, 0.001, 0.001, 0.001;
+  PriorFactor<Pose3> x0_prior(x0, x0_pose,
+      noiseModel::Diagonal::Sigmas(prior_sigma));
+  initial_estimate.insert(x0, x0_pose);
+  graph.add(x0_prior);
+
+  // Initialize the second pose as the first pose
+  initial_estimate.insert(x1, x0_pose);
+
+  CreatePlane create_plane;
+  std::vector<std::pair<Symbol, OrientedPlane3>> planes;
+
+  planes.push_back(create_plane(Unit3(-1.0, 0.0, 0.0), 1.0));
+  planes.push_back(create_plane(Unit3(0.0, -1.0, 0.0), 1.0));
+  planes.push_back(create_plane(Unit3(0.0, 0.0, -1.0), 1.0));
+
 
   // Three orthogonal planes
   Symbol l0('l', 0);
@@ -75,16 +110,7 @@ int main()
   OrientedPlane3 p2(Unit3(0.0, 0.0, -1.0), 1.0);
 
 
-  // Prior on the first pose
-  Vector prior_sigma(6);
-  prior_sigma << 0.001, 0.001, 0.001, 0.001, 0.001, 0.001;
-  PriorFactor<Pose3> x0_prior(x0, x0_pose,
-      noiseModel::Diagonal::Sigmas(prior_sigma));
-  initial_estimate.insert(x0, x0_pose);
-  graph.add(x0_prior);
 
-  // Initialize the second pose as the first pose
-  initial_estimate.insert(x1, x0_pose);
 
   // Set initial guesses for planes to their true values
   initial_estimate.insert(l0, p0);
@@ -94,7 +120,7 @@ int main()
 
 
   Vector meas_sigmas(3);
-  meas_sigmas << SIGMA_N, SIGMA_N, SIGMA_D;
+  meas_sigmas << F_SIGMA_N, F_SIGMA_N, F_SIGMA_D;
   auto meas_covariance = noiseModel::Diagonal::Sigmas(meas_sigmas);
 
   // Insert measurement factors to the FIRST pose
@@ -127,7 +153,7 @@ int main()
 
   // Solver
   LevenbergMarquardtParams params;
-  params.setMaxIterations(100);
+  params.setMaxIterations(10);
   
   LevenbergMarquardtOptimizer optimizer(graph, initial_estimate, params);
   
