@@ -56,9 +56,15 @@ class GaussianNoiseGenerator
 struct CreatePlaneLandmark
 {
   using PlaneLandmark = std::pair<Symbol, OrientedPlane3>;
+
   PlaneLandmark operator() (const Unit3& n, double d)
   {
     return std::make_pair(Symbol('l', landmark_count_++), OrientedPlane3(n, d));
+  }
+
+  PlaneLandmark operator() (OrientedPlane3 p)
+  {
+    return std::make_pair(Symbol('l', landmark_count_++), p);
   }
 
   private:
@@ -68,7 +74,9 @@ struct CreatePlaneLandmark
 
 void exampleA()
 {
-  std::cout << "****************** Example A ******************" << std::endl << std::endl;
+  std::cout << std::endl
+  << "****************** Example A ******************" 
+  << std::endl << std::endl;
 
   GaussianNoiseGenerator noise_gen(SIGMA_N, SIGMA_D);
 
@@ -93,12 +101,13 @@ void exampleA()
   // Initialize the second pose as the first pose
   initial_estimate.insert(x1, x0_pose);
 
-  // Create the true planes in the World frame
+  // Create the true plane_landmarks in the World frame
+  // and a landmark for each plane
   CreatePlaneLandmark create_plane_landmark;
-  std::vector<std::pair<Symbol, OrientedPlane3>> planes;
-  planes.push_back(create_plane_landmark(Unit3(-1.0, 0.0, 0.0), 1.0));
-  planes.push_back(create_plane_landmark(Unit3(0.0, -1.0, 0.0), 1.0));
-  planes.push_back(create_plane_landmark(Unit3(0.0, 0.0, -1.0), 1.0));
+  std::vector<std::pair<Symbol, OrientedPlane3>> plane_landmarks;
+  plane_landmarks.push_back(create_plane_landmark(Unit3(-1.0, 0.0, 0.0), 1.0));
+  plane_landmarks.push_back(create_plane_landmark(Unit3(0.0, -1.0, 0.0), 1.0));
+  plane_landmarks.push_back(create_plane_landmark(Unit3(0.0, 0.0, -1.0), 1.0));
 
 
   // Noise model for measurements
@@ -106,22 +115,22 @@ void exampleA()
   meas_sigmas << F_SIGMA_N, F_SIGMA_N, F_SIGMA_D;
   auto meas_covariance = noiseModel::Diagonal::Sigmas(meas_sigmas);
 
-  auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> plane, const Symbol& pose_symbol, const Pose3& pose)
+  auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> pl, const Symbol& pose_symbol, const Pose3& pose)
   {
-    Vector4 meas = plane.second.transform(pose).retract(noise_gen()).planeCoefficients();
-    OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, plane.first);
+    Vector4 meas = pl.second.transform(pose).retract(noise_gen()).planeCoefficients();
+    OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, pl.first);
     graph.add(factor);
   };
 
   
-  for (const auto& plane : planes)
+  for (const auto& pl : plane_landmarks)
   {
     // Set initial estimate for plane to their true values
-    initial_estimate.insert(plane.first, plane.second);
+    initial_estimate.insert(pl.first, pl.second);
     
     // Add measurements to each plane from the two poses
-    add_measurement(plane, x0, x0_pose);
-    add_measurement(plane, x1, x1_pose);
+    add_measurement(pl, x0, x0_pose);
+    add_measurement(pl, x1, x1_pose);
   }
 
   // Solver
@@ -158,7 +167,9 @@ void exampleA()
 
 void exampleB()
 {
-    std::cout << "****************** Example B ******************" << std::endl << std::endl;
+    std::cout << std::endl
+    << "****************** Example B ******************" 
+    << std::endl << std::endl;
 
   GaussianNoiseGenerator noise_gen(SIGMA_N, SIGMA_D);
 
@@ -183,35 +194,52 @@ void exampleB()
   // Initialize the second pose as the first pose
   initial_estimate.insert(x1, x0_pose);
 
-  // Create the true planes in the World frame
-  CreatePlaneLandmark create_plane_landmark;
-  std::vector<std::pair<Symbol, OrientedPlane3>> planes;
-  planes.push_back(create_plane_landmark(Unit3(-1.0, 0.0, 0.0), 1.0));
-  planes.push_back(create_plane_landmark(Unit3(0.0, -1.0, 0.0), 1.0));
-  planes.push_back(create_plane_landmark(Unit3(0.0, 0.0, -1.0), 1.0));
+  // Create the true plane_landmarks in the World frame
+  std::vector<OrientedPlane3> planes =
+    {
+      OrientedPlane3(Unit3(-1.0, 0.0, 0.0), 1.0), 
+      OrientedPlane3(Unit3(0.0, -1.0, 0.0), 1.0),
+      OrientedPlane3(Unit3(0.0, 0.0, -1.0), 1.0)
+    };
 
+
+  // Create a ton of repeat landmarks which are just
+  // the actual planes offset by a bit
+  CreatePlaneLandmark create_plane_landmark;
+  std::vector<std::pair<Symbol, OrientedPlane3>> plane_landmarks;
+  for (const auto& plane : planes)
+  {
+    for (size_t i = 0; i < 100; i++)
+    {
+      auto perturbed_landmark = 
+        create_plane_landmark(plane);
+      perturbed_landmark.second.retract(noise_gen());
+      plane_landmarks.push_back(perturbed_landmark);
+    }
+  }
+  
 
   // Noise model for measurements
   Vector meas_sigmas(3);
   meas_sigmas << F_SIGMA_N, F_SIGMA_N, F_SIGMA_D;
   auto meas_covariance = noiseModel::Diagonal::Sigmas(meas_sigmas);
 
-  auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> plane, const Symbol& pose_symbol, const Pose3& pose)
+  auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> pl, const Symbol& pose_symbol, const Pose3& pose)
   {
-    Vector4 meas = plane.second.transform(pose).retract(noise_gen()).planeCoefficients();
-    OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, plane.first);
+    Vector4 meas = pl.second.transform(pose).retract(noise_gen()).planeCoefficients();
+    OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, pl.first);
     graph.add(factor);
   };
 
   
-  for (const auto& plane : planes)
+  for (const auto& pl : plane_landmarks)
   {
     // Set initial estimate for plane to their true values
-    initial_estimate.insert(plane.first, plane.second);
+    initial_estimate.insert(pl.first, pl.second);
     
     // Add measurements to each plane from the two poses
-    add_measurement(plane, x0, x0_pose);
-    add_measurement(plane, x1, x1_pose);
+    add_measurement(pl, x0, x0_pose);
+    add_measurement(pl, x1, x1_pose);
   }
 
   // Solver
@@ -244,13 +272,13 @@ void exampleB()
   Rot3 R_err = x1_optimized.rotation().inverse() * x1_pose.rotation();
   std::cout << "Rotation error in degrees: " << (180.0/M_PI) * R_err.axisAngle().second << std::endl;
 }
-}
+
 
 
 int main()
 {
   exampleA();
-
+  exampleB();
 
   return 0;
 
