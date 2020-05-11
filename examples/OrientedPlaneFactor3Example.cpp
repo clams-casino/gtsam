@@ -6,18 +6,62 @@
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 
 #include <math.h>
-
+#include <memory>
+#include <random>
 
 using namespace gtsam;
 
+// Define ground truth for pose to be estimated
+constexpr double X = 0.5;
+constexpr double Y = -0.3;
+constexpr double Z = 0.4;
+
+constexpr double YAW = (M_PI/180.0) * 45;
+constexpr double PITCH = (M_PI/180.0) * -45;
+constexpr double ROLL = (M_PI/180.0) * 32;
+
+// Define measurement uncertainties
+constexpr double SIGMA_N = 0.01;
+constexpr double SIGMA_D = 0.05;
+
+
+// Generate noise from a gaussian distribution
+class GaussianNoiseGenerator
+{
+  using nd = std::normal_distribution<double>; 
+  std::default_random_engine re;
+  boost::scoped_ptr<nd> n_gen;
+  boost::scoped_ptr<nd> d_gen;
+
+  public:
+    GaussianNoiseGenerator(double n_gen_std, double d_gen_std) 
+    : n_gen(new nd(0.0, n_gen_std)),
+      d_gen(new nd(0.0, d_gen_std))
+    {
+      re.seed(0); 
+    }
+
+    Vector3 operator() ()
+    {
+      Vector3 noise((*n_gen)(re), (*n_gen)(re), (*d_gen)(re));
+      return noise;
+    }
+};
+
+
 int main()
 {
+  GaussianNoiseGenerator noise_gen(0.01, 0.01);
+
+  Values initial_estimate;
+  NonlinearFactorGraph graph;
+
   // Start frame and "World" frame
   Symbol x0('x', 0);
   Pose3 x0_pose (Rot3::Ypr(0.0, 0.0, 0.0), Point3(0.0, 0.0, 0.0));
 
   Symbol x1('x', 1);
-  Pose3 x1_pose (Rot3::Ypr(M_PI_4, 0.0, 0.0), Point3(0.0, 0.0, 0.0));
+  Pose3 x1_pose (Rot3::Ypr(YAW, PITCH, ROLL), Point3(X, Y, Z));
 
 
   // Three orthogonal planes
@@ -30,9 +74,6 @@ int main()
   Symbol l2('l', 2);
   OrientedPlane3 p2(Unit3(0.0, 0.0, -1.0), 1.0);
 
-
-  Values initial_estimate;
-  NonlinearFactorGraph graph;
 
   // Prior on the first pose
   Vector prior_sigma(6);
@@ -51,52 +92,61 @@ int main()
   initial_estimate.insert(l2, p2);
 
 
+
   Vector meas_sigmas(3);
-  meas_sigmas << 0.1, 0.1, 0.1;
-  auto meas_noise = noiseModel::Diagonal::Sigmas(meas_sigmas);
+  meas_sigmas << SIGMA_N, SIGMA_N, SIGMA_D;
+  auto meas_covariance = noiseModel::Diagonal::Sigmas(meas_sigmas);
 
   // Insert measurement factors to the FIRST pose
-  Vector meas_x0_l0 = p0.planeCoefficients();
-  OrientedPlane3Factor x0_l0(meas_x0_l0, meas_noise, x0, l0);
+  Vector meas_x0_l0 = p0.retract(noise_gen()).planeCoefficients();
+  OrientedPlane3Factor x0_l0(meas_x0_l0, meas_covariance, x0, l0);
   graph.add(x0_l0);
 
-  Vector meas_x0_l1 = p1.planeCoefficients();
-  OrientedPlane3Factor x0_l1(meas_x0_l1, meas_noise, x0, l1);
+  Vector meas_x0_l1 = p1.retract(noise_gen()).planeCoefficients();
+  OrientedPlane3Factor x0_l1(meas_x0_l1, meas_covariance, x0, l1);
   graph.add(x0_l1);
 
-  Vector meas_x0_l2 = p2.planeCoefficients();
-  OrientedPlane3Factor x0_l2(meas_x0_l2, meas_noise, x0, l2);
+  Vector meas_x0_l2 = p2.retract(noise_gen()).planeCoefficients();
+  OrientedPlane3Factor x0_l2(meas_x0_l2, meas_covariance, x0, l2);
   graph.add(x0_l2);
 
 
   // Insert Measurement factors for the SECOND pose
-  Vector meas_x1_l0 = p0.transform(x1_pose).planeCoefficients();
-  OrientedPlane3Factor x1_l0(meas_x1_l0, meas_noise, x1, l0);
+  Vector meas_x1_l0 = p0.transform(x1_pose).retract(noise_gen()).planeCoefficients();
+  OrientedPlane3Factor x1_l0(meas_x1_l0, meas_covariance, x1, l0);
   graph.add(x1_l0);
 
-  Vector meas_x1_l1 = p1.transform(x1_pose).planeCoefficients();
-  OrientedPlane3Factor x1_l1(meas_x1_l1, meas_noise, x1, l1);
+  Vector meas_x1_l1 = p1.transform(x1_pose).retract(noise_gen()).planeCoefficients();
+  OrientedPlane3Factor x1_l1(meas_x1_l1, meas_covariance, x1, l1);
   graph.add(x1_l1);
 
-  Vector meas_x1_l2 = p2.transform(x1_pose).planeCoefficients();
-  OrientedPlane3Factor x1_l2(meas_x1_l2, meas_noise, x1, l2);
+  Vector meas_x1_l2 = p2.transform(x1_pose).retract(noise_gen()).planeCoefficients();
+  OrientedPlane3Factor x1_l2(meas_x1_l2, meas_covariance, x1, l2);
   graph.add(x1_l2);
 
 
-  // std::cout << meas_x1_l0 << std::endl;
-  // std::cout << meas_x1_l1 << std::endl;
-  // std::cout << meas_x1_l2 << std::endl;
-
+  // Solver
   LevenbergMarquardtParams params;
   params.setMaxIterations(100);
   
   LevenbergMarquardtOptimizer optimizer(graph, initial_estimate, params);
   
+
+  // Get results
   Values results = optimizer.optimize();
 
   Pose3 x1_optimized = results.at<Pose3>(x1);
 
-  std::cout << x1_optimized << std::endl;
+  std::cout << "Actual translation:" << std::endl;
+  x1_pose.translation().print(); std::cout << std::endl << std::endl;
+  std::cout << "Estimated translation:" << std::endl;
+  x1_optimized.translation().print(); std::cout << std::endl << std::endl;
+
+  std::cout << "Actual Rotation:" << std::endl;
+  x1_pose.rotation().print(); std::cout << std::endl << std::endl;
+  std::cout << "Estimated Rotation:" << std::endl;
+  x1_optimized.rotation().print(); std::cout << std::endl << std::endl;
+
 
   return 0;
 
