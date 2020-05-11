@@ -66,9 +66,10 @@ struct CreatePlaneLandmark
 };
 
 
-
-int main()
+void exampleA()
 {
+  std::cout << "****************** Example A ******************" << std::endl << std::endl;
+
   GaussianNoiseGenerator noise_gen(SIGMA_N, SIGMA_D);
 
   Values initial_estimate;
@@ -152,6 +153,103 @@ int main()
   // orientation error as an angle
   Rot3 R_err = x1_optimized.rotation().inverse() * x1_pose.rotation();
   std::cout << "Rotation error in degrees: " << (180.0/M_PI) * R_err.axisAngle().second << std::endl;
+}
+
+
+void exampleB()
+{
+    std::cout << "****************** Example B ******************" << std::endl << std::endl;
+
+  GaussianNoiseGenerator noise_gen(SIGMA_N, SIGMA_D);
+
+  Values initial_estimate;
+  NonlinearFactorGraph graph;
+
+  // Start frame and World frame
+  Symbol x0('x', 0);
+  Pose3 x0_pose (Rot3::Ypr(0.0, 0.0, 0.0), Point3(0.0, 0.0, 0.0));
+
+  Symbol x1('x', 1);
+  Pose3 x1_pose (Rot3::Ypr(YAW, PITCH, ROLL), Point3(X, Y, Z));
+
+  // Prior on the first pose
+  Vector prior_sigma(6);
+  prior_sigma << 0.001, 0.001, 0.001, 0.001, 0.001, 0.001;
+  PriorFactor<Pose3> x0_prior(x0, x0_pose,
+      noiseModel::Diagonal::Sigmas(prior_sigma));
+  initial_estimate.insert(x0, x0_pose);
+  graph.add(x0_prior);
+
+  // Initialize the second pose as the first pose
+  initial_estimate.insert(x1, x0_pose);
+
+  // Create the true planes in the World frame
+  CreatePlaneLandmark create_plane_landmark;
+  std::vector<std::pair<Symbol, OrientedPlane3>> planes;
+  planes.push_back(create_plane_landmark(Unit3(-1.0, 0.0, 0.0), 1.0));
+  planes.push_back(create_plane_landmark(Unit3(0.0, -1.0, 0.0), 1.0));
+  planes.push_back(create_plane_landmark(Unit3(0.0, 0.0, -1.0), 1.0));
+
+
+  // Noise model for measurements
+  Vector meas_sigmas(3);
+  meas_sigmas << F_SIGMA_N, F_SIGMA_N, F_SIGMA_D;
+  auto meas_covariance = noiseModel::Diagonal::Sigmas(meas_sigmas);
+
+  auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> plane, const Symbol& pose_symbol, const Pose3& pose)
+  {
+    Vector4 meas = plane.second.transform(pose).retract(noise_gen()).planeCoefficients();
+    OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, plane.first);
+    graph.add(factor);
+  };
+
+  
+  for (const auto& plane : planes)
+  {
+    // Set initial estimate for plane to their true values
+    initial_estimate.insert(plane.first, plane.second);
+    
+    // Add measurements to each plane from the two poses
+    add_measurement(plane, x0, x0_pose);
+    add_measurement(plane, x1, x1_pose);
+  }
+
+  // Solver
+  LevenbergMarquardtParams params;
+  params.setMaxIterations(10);
+  params.linearSolverType = NonlinearOptimizerParams::MULTIFRONTAL_QR;
+  LevenbergMarquardtOptimizer optimizer(graph, initial_estimate, params);
+  
+  // Get results
+  Values results = optimizer.optimize();
+  Pose3 x1_optimized = results.at<Pose3>(x1);
+
+  std::cout << "Actual translation:" << std::endl;
+  x1_pose.translation().print(); std::cout << std::endl << std::endl;
+  std::cout << "Estimated translation:" << std::endl;
+  x1_optimized.translation().print(); std::cout << std::endl;
+
+  std::cout << "Translation error: " 
+            << x1_pose.translation().distance(x1_optimized.translation())
+            << std::endl << std::endl;
+
+  // displacement error
+
+  std::cout << "Actual Rotation:" << std::endl;
+  x1_pose.rotation().print(); std::cout << std::endl << std::endl;
+  std::cout << "Estimated Rotation:" << std::endl;
+  x1_optimized.rotation().print(); std::cout << std::endl << std::endl;
+
+  // orientation error as an angle
+  Rot3 R_err = x1_optimized.rotation().inverse() * x1_pose.rotation();
+  std::cout << "Rotation error in degrees: " << (180.0/M_PI) * R_err.axisAngle().second << std::endl;
+}
+}
+
+
+int main()
+{
+  exampleA();
 
 
   return 0;
