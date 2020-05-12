@@ -29,6 +29,10 @@ constexpr double F_SIGMA_N = 0.01;
 constexpr double F_SIGMA_D = 0.05;
 
 
+// Example B, noise for perturbed landmark retraction
+constexpr double PL_N = 0.5; 
+constexpr double PL_D = 0.5;
+
 // Generate noise from a gaussian distribution
 class GaussianNoiseGenerator
 {
@@ -78,7 +82,7 @@ void exampleA()
   << "****************** Example A ******************" 
   << std::endl << std::endl;
 
-  GaussianNoiseGenerator noise_gen(SIGMA_N, SIGMA_D);
+  GaussianNoiseGenerator meas_noise_gen(SIGMA_N, SIGMA_D);
 
   Values initial_estimate;
   NonlinearFactorGraph graph;
@@ -117,7 +121,7 @@ void exampleA()
 
   auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> pl, const Symbol& pose_symbol, const Pose3& pose)
   {
-    Vector4 meas = pl.second.transform(pose).retract(noise_gen()).planeCoefficients();
+    Vector4 meas = pl.second.transform(pose).retract(meas_noise_gen()).planeCoefficients();
     OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, pl.first);
     graph.add(factor);
   };
@@ -171,7 +175,8 @@ void exampleB()
     << "****************** Example B ******************" 
     << std::endl << std::endl;
 
-  GaussianNoiseGenerator noise_gen(SIGMA_N, SIGMA_D);
+  GaussianNoiseGenerator meas_noise_gen(SIGMA_N, SIGMA_D);
+  GaussianNoiseGenerator pl_noise_gen(PL_N, PL_D);
 
   Values initial_estimate;
   NonlinearFactorGraph graph;
@@ -213,7 +218,7 @@ void exampleB()
     {
       auto perturbed_landmark = 
         create_plane_landmark(plane);
-      perturbed_landmark.second.retract(noise_gen());
+      perturbed_landmark.second = perturbed_landmark.second.retract(pl_noise_gen());
       plane_landmarks.push_back(perturbed_landmark);
     }
   }
@@ -226,7 +231,7 @@ void exampleB()
 
   auto add_measurement = [&](const std::pair<Symbol, OrientedPlane3> pl, const Symbol& pose_symbol, const Pose3& pose)
   {
-    Vector4 meas = pl.second.transform(pose).retract(noise_gen()).planeCoefficients();
+    Vector4 meas = pl.second.transform(pose).retract(meas_noise_gen()).planeCoefficients();
     OrientedPlane3Factor factor(meas, meas_covariance, pose_symbol, pl.first);
     graph.add(factor);
   };
